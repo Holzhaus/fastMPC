@@ -18,11 +18,11 @@
 # along with fastMPC. If not, see <http://www.gnu.org/licenses/>.
 #
 
-import mpd, math, sys, os, json, threading
+import mpd, math, sys, os, json, threading, configparser
 from gi.repository import GObject, Gtk, Gdk, GdkPixbuf, Notify
 
 APPNAME = "fastMPC"
-APPVERSION = 0.01
+APPVERSION = 0.02
 
 class PollerError(Exception):
 	"""Fatal error in poller."""
@@ -50,22 +50,22 @@ class MPDPoller(object):
 		# ConnectionError and ProtocolError are always fatal.  Others may not
 		# be, but we don't know how to handle them here, so treat them as if
 		# they are instead of ignoring them.
-		except mpd.MPDError as e:
+		except Exception as e:
 			raise PollerError("Could not connect to '%s': %s" % (self._host, e))
-
-		if self._password:
-			try:
-				self._client.password(self._password)
-
-			# Catch errors with the password command (e.g., wrong password)
-			except CommandError as e:
-				raise PollerError("Could not connect to '%s': password commmand failed: %s" % (self._host, e))
-
-			# Catch all other possible errors
-			except (mpd.MPDError, IOError) as e:
-				raise PollerError("Could not connect to '%s': error with password command: %s" % (self._host, e))
+		else:
+			if self._password:
+				try:
+					self._client.password(self._password)
+	
+				# Catch errors with the password command (e.g., wrong password)
+				except CommandError as e:
+					raise PollerError("Could not connect to '%s': password commmand failed: %s" % (self._host, e))
+	
+				# Catch all other possible errors
+				except (mpd.MPDError, IOError) as e:
+					raise PollerError("Could not connect to '%s': error with password command: %s" % (self._host, e))
 		
-		self.mpd_version = self._client.mpd_version
+			self.mpd_version = self._client.mpd_version
 
 	def disconnect(self):
 		# Try to tell MPD we're closing the connection first
@@ -213,11 +213,21 @@ class fastMPC(object):
 	mpc_currentsong = {'artist': '', 'album': '', 'title': ''}
 	mpc_status = {'state': 'stop'}
 	mpc_stats = {}
-	config_server = "nslu2"
-	config_port = 6600
+	config = configparser.ConfigParser({'host': 'localhost',
+					    'password': '',
+					    'port': '6600',
+					    'timeout': '10'})
 	def __init__(self):
-		self.mpc = MPDPoller(self.config_server, self.config_port) # create client object
-		self.mpc2 = MPDPoller(self.config_server, self.config_port) # This one is for updates only
+		# Load settings first
+		configfile_path = os.path.join(self.createDataPath(), "config")
+		if os.path.isfile(configfile_path):
+			self.config.read(configfile_path)
+		else:
+			self.config.add_section('connection')
+			self.config.add_section('collection')
+		# Create MPD Client object
+		self.mpc  = MPDPoller(self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port']))) # create client object
+		self.mpc2 = MPDPoller(self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port']))) # This one is for updates only
 		builder = Gtk.Builder()
 		builder.add_from_file("%s.glade" % APPNAME.lower())
 		builder.connect_signals({
@@ -248,7 +258,8 @@ class fastMPC(object):
 			"on_toolbutton_playlist_save_clicked" : self.cb_playlistSaveClick,
 			"on_toolbutton_playlist_remove_clicked" : self.cb_playlistRemoveClick
 			})
-		window = builder.get_object("mainwindow")
+		self.gui_mainwindow = builder.get_object("mainwindow")
+		self.gui_settingsdialog = builder.get_object("settings_dialog")
 		self.gui_statusbar = builder.get_object("statusbar")
 		self.gui_statusbar.push(self.gui_statusbar.get_context_id("connection"), "Keine Verbindung")
 		self.gui_volumebutton = builder.get_object("volumebutton")
@@ -277,8 +288,38 @@ class fastMPC(object):
 		self.gui_folder_store = builder.get_object("folder_store")
 		self.gui_folder_store_sort = builder.get_object("folder_store_sort")
 		self.gui_folder_store_sort.set_sort_column_id(0, Gtk.SortType.ASCENDING)
-		window.show_all()
-		self.connect()
+		self.gui_settings_connection_host = builder.get_object("settings_connection_host")
+		self.gui_settings_connection_password = builder.get_object("settings_connection_password")
+		self.gui_settings_connection_port = builder.get_object("settings_connection_port")
+		self.gui_settings_connection_timeout = builder.get_object("settings_connection_timeout")
+		self.gui_settings_artists_preferalbumartist = builder.get_object("settings_artists_preferalbumartist")
+		self.gui_settings_artists_capitalize = builder.get_object("settings_artists_capitalize")
+		self.gui_settings_artists_ignoreprefix = builder.get_object("settings_artists_ignoreprefix")
+		self.gui_settings_compilations_use = builder.get_object("settings_compilations_use")
+		self.gui_settings_compilations_artists = builder.get_object("settings_compilations_artists")
+		self.gui_settings_compilations_folders = builder.get_object("settings_compilations_folders")
+		self.gui_settings_albums_capitalize = builder.get_object("settings_albums_capitalize")
+		self.gui_settings_songs_capitalize = builder.get_object("settings_songs_capitalize")
+
+
+		self.gui_settings_connection_host.set_text(self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), -1)
+		self.gui_settings_connection_password.set_text(self.config.get("connection","password",fallback=self.config['DEFAULT']['password']), -1)
+		self.gui_settings_connection_port.set_value(int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port'])))
+		self.gui_settings_connection_timeout.set_value(int(self.config.get("connection","timeout",fallback=self.config['DEFAULT']['timeout'])))
+		self.gui_settings_artists_preferalbumartist.set_active(self.config.getboolean("collection","artists_preferalbumartist",fallback=False))
+		self.gui_settings_artists_capitalize.set_active(self.config.getboolean("collection","artists_capitalize",fallback=True))
+		self.gui_settings_artists_ignoreprefix.set_text(self.config.get("collection","artists_ignoreprefix",fallback="The,Die"), -1)
+		self.gui_settings_compilations_use.set_active(self.config.getboolean("collection","compilations_use",fallback=True))
+		self.gui_settings_compilations_artists.set_text(self.config.get("collection","compilations_artists",fallback="Various Artists,Various,VA,V.A.,V. A.,Verschiedene Interpreten"), -1)
+		self.gui_settings_compilations_folders.set_text(self.config.get("collection","compilations_folders",fallback="Various Artists,Various,VA,V.A.,V. A.,Verschiedene Interpreten"), -1)
+		self.gui_settings_albums_capitalize.set_active(self.config.getboolean("collection","albums_capitalize",fallback=True))
+		self.gui_settings_songs_capitalize.set_active(self.config.getboolean("collection","songs_capitalize",fallback=False))
+
+		self.gui_mainwindow.show_all()
+		try:
+			self.connect()
+		except Exception as e:
+			self._notify(APPNAME, "Konnte keine Verbindung zu %s:%i herstellen." % (self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port']))), "connection")
 
 	# *****************************************************************************************
 	# * Callback functions                                                                    *
@@ -291,7 +332,6 @@ class fastMPC(object):
 
 		self.mpc2.connect()
 		self.mpc_stats = stats = self.mpc2.stats()
-		self._notify(APPNAME,"Sammlung geladen (%s Interpreten, %s Alben und %s Titel)" % (stats['artists'], stats['albums'], stats['songs']), "collection")
 		self.updateStatus();
 		self.timeout_id = GObject.timeout_add(500,self.cb_updateStatus, None)
 
@@ -305,7 +345,7 @@ class fastMPC(object):
 		self.gui_toolbutton_next.set_sensitive(True)
 		self.gui_toolbutton_stop.set_sensitive(True)
 
-		GObject.idle_add(self.cb_parseCollection)
+		threading.Thread(target=self.cb_parseCollection).start()
 		return False
 
 	def cb_parseCollection(self):
@@ -315,10 +355,7 @@ class fastMPC(object):
 			db = self.parseServer(self.db,self.gui_collection_store,self.gui_folder_store)
 			if True:
 				self.saveCache(self.mpc_stats,db)
-		self.gui_collection_view.set_sensitive(True)
-		self.gui_folder_view.set_sensitive(True)
-		self.gui_collection_filter.set_sensitive(True)
-		self.gui_collection_filter_button.set_sensitive(True)
+		self._notify(APPNAME,"Sammlung geladen (%s Interpreten, %s Alben und %s Titel)" % (self.mpc_stats['artists'], self.mpc_stats['albums'], self.mpc_stats['songs']), "collection")
 		return False
 
 	def cb_connect(self, obj):
@@ -462,7 +499,6 @@ class fastMPC(object):
 			if column == -1:
 				result.append(store[treeiter][:])
 			else:
-				# FIXME: Strange Multithreading error appears here
 				try:
 					row = store[treeiter][column]
 				except Exception:
@@ -477,6 +513,7 @@ class fastMPC(object):
 	def _addNodeToPlaylist(self, args):
 		store, treeiter, column = args
 		result = []
+		
 		self._iterNode(store, treeiter, result, column)
 		for filename in result:
 			if filename:
@@ -504,7 +541,7 @@ class fastMPC(object):
 	# *****************************************************************************************
 	def connect(self):
 		self.mpc.connect()
-		self._notify(APPNAME, "Verbunden mit %s:%i (MPD-Version %s), lade Sammlung..." % (self.config_server, self.config_port, self.mpc.mpd_version), "connection")
+		self._notify(APPNAME, "Verbunden mit %s:%i (MPD-Version %s), lade Sammlung..." % (self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port'])), self.mpc.mpd_version), "connection")
 		GObject.idle_add(self.cb_loadCollection)
 		#self.buildCollection()
 		#self.cb_buildCollectionFinished()
@@ -672,8 +709,9 @@ class fastMPC(object):
 		return True
 
 	def _notify(self, title, text, context=APPNAME.lower()):
-		self.gui_statusbar.pop(self.gui_statusbar.get_context_id(context))
-		self.gui_statusbar.push(self.gui_statusbar.get_context_id(context), text)
+		if context != "playback":
+			self.gui_statusbar.pop(self.gui_statusbar.get_context_id(context))
+			self.gui_statusbar.push(self.gui_statusbar.get_context_id(context), text)
 		notification = Notify.Notification.new(title, text, 'dialog-information')
 		notification.show()
 
@@ -681,7 +719,27 @@ class fastMPC(object):
 		pass
 
 	def showSettings(self):
-		pass
+		result = self.gui_settingsdialog.run()
+		if result == Gtk.ResponseType.OK:
+			# Connection Tab
+			self.config.set("connection","host",self.gui_settings_connection_host.get_text())
+			self.config.set("connection","password",self.gui_settings_connection_password.get_text())
+			self.config.set("connection","port",str(int(self.gui_settings_connection_port.get_value())))
+			self.config.set("connection","timeout",str(int(self.gui_settings_connection_timeout.get_value())))
+			# Collection Tab
+			self.config.set("collection","artists_preferalbumartist",'yes' if self.gui_settings_artists_preferalbumartist.get_active() else 'no')
+			self.config.set("collection","artists_capitalize",'yes' if self.gui_settings_artists_capitalize.get_active() else 'no')
+			self.config.set("collection","artists_ignoreprefix",self.gui_settings_artists_ignoreprefix.get_text())
+			self.config.set("collection","compilations_use",'yes' if self.gui_settings_compilations_use.get_active() else 'no')
+			self.config.set("collection","compilations_artists",self.gui_settings_compilations_artists.get_text())
+			self.config.set("collection","compilations_folders",self.gui_settings_compilations_folders.get_text())
+			self.config.set("collection","albums_capitalize",'yes' if self.gui_settings_albums_capitalize.get_active() else 'no')
+			self.config.set("collection","songs_capitalize",'yes' if self.gui_settings_songs_capitalize.get_active() else 'no')
+			# Save Config File
+			configfile_path = os.path.join(self.createDataPath(), "config")
+			with open(configfile_path, 'w') as configfile:
+				self.config.write(configfile)
+		self.gui_settingsdialog.hide()
 
 	def changeVolume(self, volume):
 		self.mpc.setvol(volume)
@@ -739,7 +797,7 @@ class fastMPC(object):
 
 	def loadCache(self, stats):
 		print("cb_loadCache")
-		db_file = os.path.join(self.createDataPath(), "dbcache_%s_%i_%s.dump" % (self.config_server, self.config_port, stats['db_update']))
+		db_file = os.path.join(self.createDataPath(), "dbcache_%s_%i_%s.dump" % (self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port'])), stats['db_update']))
 		if not os.path.isfile(db_file):
 			raise IOError
 			return None
@@ -772,7 +830,7 @@ class fastMPC(object):
 		data = [stats, db]
 		try:
 			# Now let's open that file for writing...
-			db_file = os.path.join(self.createDataPath(), "dbcache_%s_%i_%s.dump" % (self.config_server, self.config_port, stats['db_update']))
+			db_file = os.path.join(self.createDataPath(), "dbcache_%s_%i_%s.dump" % (self.config.get("connection","host",fallback=self.config['DEFAULT']['host']), int(self.config.get("connection","port",fallback=self.config['DEFAULT']['port'])), stats['db_update']))
 			f = open(db_file, "w")
 			# ...and dump the DB into that file
 			json.dump(data,f)
@@ -784,6 +842,15 @@ class fastMPC(object):
 	def parseServer(self, db, collection_store, folder_store):
 		collection = {}
 		folders = {'_iter': None}
+		config_compilations_artists = filter(bool,[x.strip() for x in self.config.get("collection","compilations_artists",fallback="Various Artists,Various,VA,V.A.,V. A.,Verschiedene Interpreten").split(",")])
+		config_compilations_folders = filter(bool,[x.strip() for x in self.config.get("collection","compilations_folders",fallback="Various Artists,Various,VA,V.A.,V. A.,Verschiedene Interpreten").split(",")])
+		config_artists_ignoreprefix = filter(bool,[x.strip() for x in self.config.get("collection","artists_ignoreprefix",fallback="The,Die").split(",")])
+		config_artists_preferalbumartist = self.config.getboolean("collection","artists_preferalbumartist",fallback=False)
+		config_compilations_use = self.config.getboolean("collection","compilations_use",fallback=True)
+		config_compilations_artistname = self.config.get("collection","compilations_artistname","Verschiedene Interpreten")
+		config_artists_capitalize = self.config.getboolean("collection","artists_capitalize",fallback=True)
+		config_albums_capitalize = self.config.getboolean("collection","albums_capitalize",fallback=True)
+		config_songs_capitalize = self.config.getboolean("collection","songs_capitalize",fallback=False)
 		for item in db:
 			for tag, value in item.items():
 				if isinstance(value, list):
@@ -795,32 +862,33 @@ class fastMPC(object):
 					trackartist = artist = str(item['artist'])
 				else:
 					trackartist = artist = "Unbekannter Interpret"
-				if False:
+				if config_artists_preferalbumartist:
 					if 'albumartist' in item.keys():
 						artist = str(item['albumartist'])
 
-				if True:
-					if artist in ("Various Artists", "Various", "VA", "V.A.", "V. A.", "Verschiedene Interpreten"):
-						artist = "Verschiedene Interpreten"
+				if config_compilations_use:
+					if compilations_artists:
+						if artist in compilations_artists:
+							artist = config_compilations_artistname
 				
-				if True:
-					if str(str(str(item['file']).split("/")[0]).split("\\")[0]) in ("Various Artists", "Various", "VA", "V.A.", "V. A.", "Verschiedene Interpreten"):
-						artist = "Verschiedene Interpreten"
+					if compilations_folders:
+						if str(str(str(item['file']).split("/")[0]).split("\\")[0]).strip() in compilations_folders:
+							artist = config_compilations_artistname
 
 				artist = artist.strip()
 				trackartist = trackartist.strip()
 
-				if True:
-					if artist == "Verschiedene Interpreten":
+				if config_albums_capitalize:
+					if artist == config_compilations_artistname:
 						trackartist = ' '.join(word.capitalize() for word in trackartist.split())
 					else:
 						artist = ' '.join(word.capitalize() for word in artist.split())
 
-				if True:
-					if artist != "Verschiedene Interpreten":
-						for ignore in ('The', 'Die'):
+				if config_artists_ignoreprefix:
+					if artist != config_compilations_artistname:
+						for ignore in config_artists_ignoreprefix:
 							if artist.lower().startswith("%s " % ignore.lower()):
-								artist = "%s, %s" % (artist[len(ignore)+1:],ignore)
+								artist = "%s, %s" % (artist[len(ignore):].strip(),ignore)
 
 				if not artist in collection.keys():
 					meta = [artist, "", Gtk.STOCK_ORIENTATION_PORTRAIT,artist]
@@ -833,7 +901,7 @@ class fastMPC(object):
 				else:
 					album = "Unbekanntes Album"
 
-				if False:
+				if config_albums_capitalize:
 					album = ' '.join(word.capitalize() for word in album.split())
 
 				if not album in collection[artist].keys():
@@ -862,6 +930,8 @@ class fastMPC(object):
 				file = str(item['file'])
 				if 'title' in item.keys():
 					title = str(item['title'])
+					if config_songs_capitalize:
+						title = ' '.join(word.capitalize() for word in title.split())
 				else:
 					title = "Unbekannter Titel"
 				if 'track' in item.keys():
@@ -872,12 +942,12 @@ class fastMPC(object):
 					except Exception:
 						track = 0
 					else:
-						if artist == "Verschiedene Interpreten":
+						if artist == config_compilations_artistname:
 							song = "%i - %s - %s" % (track, trackartist, title)
 						else:
 							song = "%i - %s" % (track, title)
 				if not song:
-					if artist == "Verschiedene Interpreten":
+					if artist == config_compilations_artistname:
 		 				song = "%s - %s" % (trackartist, title)
 					else:
 						song = title
@@ -909,14 +979,18 @@ class fastMPC(object):
 				folder_iter = folder_store.append(folders_tmp['_iter'], meta)
 				folders_tmp[folder] = {'_iter' : folder_iter, '_meta' : meta}
 
+		self.gui_folder_view.set_sensitive(True)
+		self.gui_collection_view.set_sensitive(True)
+		self.gui_collection_filter.set_sensitive(True)
+		self.gui_collection_filter_button.set_sensitive(True)
+
 		self._remove_keys(collection, ('_iter'))
 		self._remove_keys(folders, ('_iter'))
 		return (collection, folders)
 
 	def parseCache(self, db, collection_store, folder_store):
-		self.parseCacheCollection(db[0], collection_store)
-		for folder in db[1]:
-			self.parseCacheFolders(db[1][folder], folder_store)
+		threading.Thread(target=self.parseCacheCollection, args=(db[0], collection_store)).start()
+		threading.Thread(target=self.parseCacheFolders, args=(db[1], folder_store)).start()
 	def parseCacheCollection(self, db, store):
 		for artist_name, artist in db.items():
 			artist_iter = store.append(None, artist['_meta'])
@@ -931,12 +1005,19 @@ class fastMPC(object):
 								disc_iter = album_iter
 							for song_key, song in disc.items():
 								store.append(disc_iter, song)
-	def parseCacheFolders(self, folder, store, treeiter=None):
+		self.gui_collection_view.set_sensitive(True)
+		self.gui_collection_filter.set_sensitive(True)
+		self.gui_collection_filter_button.set_sensitive(True)
+	def parseCacheFolders(self, folders, store):
+		for folder in folders:
+				self.parseCacheSubfolders(folders[folder], store)
+		self.gui_folder_view.set_sensitive(True)
+	def parseCacheSubfolders(self, folder, store, treeiter=None):
 		if isinstance(folder, dict):
 			treeiter_new = store.append(treeiter, folder['_meta'])
 			for subfolder_key, subfolder in folder.items():
 				if subfolder_key != '_meta':
-					self.parseCacheFolders(subfolder, store, treeiter_new)
+					self.parseCacheSubfolders(subfolder, store, treeiter_new)
 		else:
 			store.append(treeiter, folder)
 

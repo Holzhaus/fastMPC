@@ -29,11 +29,11 @@
       <column type="gchararray"/>
     </columns>
   </object>
-  <object class="GtkTreeModelFilter" id="collection_store_filter">
+  <!--<object class="GtkTreeModelFilter" id="collection_store_filter">
     <property name="child_model">collection_store</property>
-  </object>
+  </object>-->
   <object class="GtkTreeModelSort" id="collection_store_filter_sort">
-    <property name="model">collection_store_filter</property>
+    <property name="model">collection_store</property>
   </object>
   <object class="GtkTreeStore" id="folder_store">
     <columns>

@@ -788,15 +788,6 @@ class fastMPC(object):
 		self.gui_collection_view.set_model(self.gui_collection_store)
 		self.gui_collection_view.set_sensitive(True)
 		print("Collection loaded.")
-		i = self.gui_collection_store.get_iter(Gtk.TreePath.new_first())
-		#i = self.gui_collection_store.iter_next(i)
-		print(self.gui_collection_store.get_value(i,0))
-		i = self.gui_collection_store.iter_next(i)
-		print(self.gui_collection_store.get_value(i,0))
-		i = self.gui_collection_store.iter_next(i)
-		print(self.gui_collection_store.get_value(i,0))
-		i = self.gui_collection_store.iter_next(i)
-		print(self.gui_collection_store.get_value(i,0))
 		self._notify(APPNAME,"Sammlung geladen (%s Interpreten, %s Alben und %s Titel)" % (stats['artists'], stats['albums'], stats['songs']), "collection")
 
 	"""def loadCache(self, stats):

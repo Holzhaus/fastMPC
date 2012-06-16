@@ -196,7 +196,6 @@ class Database(object):
 		return None
 
 	def get_id_by_path(self, path):
-		print(path)
 		if not path:
 			n = 0
 			return self.get_nth_artist(int(n))
@@ -372,13 +371,11 @@ class Database(object):
 		self.db.commit()
 		c.close()
 
-class CollectionModel(GObject.GObject, Gtk.TreeModel):
+class CollectionModel(GObject.Object, Gtk.TreeModel):
+	STAMP = 0
 	NUM_COL = 4
 	(ROWREF_ARTIST, ROWREF_ALBUM, ROWREF_DISC, ROWREF_SONG) = (1,2,3,4)
-	COL_TYPES = (GObject.TYPE_STRING,
-		     GObject.TYPE_STRING,
-		     GObject.TYPE_STRING,
-		     GObject.TYPE_STRING)
+	COL_TYPES = (str,str,str,str)
 	COL_NAMES = ("name",
 		     "file",
 		     "icon",
@@ -386,154 +383,177 @@ class CollectionModel(GObject.GObject, Gtk.TreeModel):
 	# rowrefs are tuples with 2 elements:
 	# 	1 = type (Artist, Album, Disc, Song)
 	#       2 = ID (if type is ROWREF_DISC, ID is a tuple of albumid and discid)
-	def __len__(self):
-		return self.iter_n_children()
- 
-	def __bool__(self):
-		return True
 	def __init__(self, db):
 		GObject.GObject.__init__(self)
 		self.db = db
-
+	
 	def do_get_column_names(self):
 		return self.COL_NAMES[:]
 
 	def do_get_flags(self):
-		return 0
+		return Gtk.TreeModelFlags.ITERS_PERSIST
 
-	def do_get_n_columns(self):
+	def do_get_n_columns(self, *data):
 		return len(self.COL_TYPES)
 
 	def do_get_column_type(self, n):
-		return CollectionModel.COL_TYPES[n]
+		#return CollectionModel.COL_TYPES[n]
+		return str
+
+	def do_get_iter_first(self):
+		return self.do_get_iter(Gtk.TreePath(0))
 
 	def do_get_iter(self, path):
+		print("do get iter", path, type(path))
 		path = path.get_indices()
 		rowrefid = self.db.get_id_by_path(path)
+		t = Gtk.TreeIter()
+		t.stamp = self.STAMP
 		if not path or isinstance(path,int) or len(path) == 1:
-			return (CollectionModel.ROWREF_ARTIST, rowrefid)
+			t.user_data = (CollectionModel.ROWREF_ARTIST, rowrefid)
 		elif len(path) == 2:
-			return (CollectionModel.ROWREF_ALBUM, rowrefid)
+			t.user_data = (CollectionModel.ROWREF_ALBUM, rowrefid)
 		elif len(path) == 3:
 			if isinstance(rowref,tuple):
-				return (CollectionModel.ROWREF_DISC, rowrefid)
+				t.user_data = (CollectionModel.ROWREF_DISC, rowrefid)
 			else:
-				return (CollectionModel.ROWREF_SONG, rowrefid)
+				t.user_data = (CollectionModel.ROWREF_SONG, rowrefid)
 		elif len(path) == 4:
-			return (CollectionModel.ROWREF_SONG, rowrefid)
-		return 0
+			t.user_data = (CollectionModel.ROWREF_SONG, rowrefid)
+		else:
+			raise InvalidColumnError
+		return (True, t)
 
 	def do_get_path(self, rowref):
+		print("do get_path", rowref)
 		if not rowref:
-			return ()
-		elif rowref[0] == CollectionModel.ROWREF_ARTIST:
-			artistpos = self.db.get_artist_position_by_id(rowref[1])
+			return Gtk.TreePath(0)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ARTIST:
+			artistpos = self.db.get_artist_position_by_id(rowref.user_data[1])
 			if artistpos:
-				return (artistpos,)
-		elif rowref[0] == CollectionModel.ROWREF_ALBUM:
-			albumpos = self.db.get_albuetm_position_by_id(rowref[1])
+				return Gtk.TreePath(artistpos,)
+				
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ALBUM:
+			albumpos = self.db.get_albuetm_position_by_id(rowref.user_data[1])
 			if albumpos:
-				artistpos = self.db.get_artist_position_by_album_id(rowref[1])
+				artistpos = self.db.get_artist_position_by_album_id(rowref.user_data[1])
 				if artistpos:
-					return (artistpos, albumpos)
-		elif rowref[0] == CollectionModel.ROWREF_DISC:
-			discpos = (rowref[1][1]-1)
+					return Gtk.TreePath(artistpos, albumpos)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_DISC:
+			discpos = (rowref.user_data[1][1]-1)
 			if discpos:
-				albumpos = self.db.get_album_position_by_id(rowref[1][1])
+				albumpos = self.db.get_album_position_by_id(rowref.user_data[1][1])
 				if albumpos:
-					artistpos = self.db.get_artist_position_by_album_id(rowref[1])
+					artistpos = self.db.get_artist_position_by_album_id(rowref.user_data[1])
 					if artistpos:
-						return (artistpos, albumpos, discpos)
-		elif rowref[0] == CollectionModel.ROWREF_SONG:
-			songpos = self.db.get_song_position_by_id(rowref[1])
+						return Gtk.TreePath(artistpos, albumpos, discpos)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_SONG:
+			songpos = self.db.get_song_position_by_id(rowref.user_data[1])
 			if songpos:
-				discid = self.db.get_disc_by_song_id(rowref[1])
-				albumpos = self.db.get_album_position_by_song_id(rowref[1])
+				discid = self.db.get_disc_by_song_id(rowref.user_data[1])
+				albumpos = self.db.get_album_position_by_song_id(rowref.user_data[1])
 				if albumpos:
-					artistpos = self.db.get_artist_song_by_id(rowref[1])
+					artistpos = self.db.get_artist_song_by_id(rowref.user_data[1])
 					if artistpos:
 						if discid:
-							return (artistpos, albumpos, (discpos-1), songpos)
+							return Gtk.TreePath(artistpos, albumpos, (discpos-1), songpos)
 						else:
-							return (artistpos, albumpos, songpos)
-		return ()
+							return Gtk.TreePath(artistpos, albumpos, songpos)
+		return Gtk.TreePath(0)
 
 	def do_get_value(self, rowref, column):
-		print("do_get_value",rowref)
-		if not rowref or not rowref:
+		print("do get_value" , rowref, column)
+		return "test"
+		"""print("do_get_value",rowref)
+		if not rowref or not rowref.user_data:
 			print("Damn it, something went wrong!")
-			pass # This should NEVER happen
-		elif rowref[0] == CollectionModel.ROWREF_ARTIST:
+			return "ERROR" # This should NEVER happen
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ARTIST:
 			if column == 0:
-				return self.db.get_artist_name_by_id(rowref[1])
+				return self.db.get_artist_name_by_id(rowref.user_data[1])
 			elif column == 1:
 				return ""
 			elif column == 2:
 				return str(Gtk.STOCK_ORIENTATION_PORTRAIT)
 			elif column == 2:
 				return ""
-		elif rowref[0] == CollectionModel.ROWREF_ALBUM:
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ALBUM:
 			if column == 0:
-				return self.db.get_album_name_by_id(rowref[1])
+				return self.db.get_album_name_by_id(rowref.user_data[1])
 			elif column == 1:
 				return ""
 			elif column == 2:
 				return str(Gtk.STOCK_CDROM)
 			elif column == 2:
 				return ""
-		elif rowref[0] == CollectionModel.ROWREF_DISC:
+		elif rowref.user_data[0] == CollectionModel.ROWREF_DISC:
 			if column == 0:
-				return "CD %s" % str(rowref[1][1])
+				return "CD %s" % str(rowref.user_data[1][1])
 			elif column == 1:
 				return ""
 			elif column == 2:
 				return ""
 			elif column == 2:
 				return ""
-		elif rowref[0] == CollectionModel.ROWREF_SONG:
+		elif rowref.user_data[0] == CollectionModel.ROWREF_SONG:
 			if column == 0:
-				return self.db.get_song_name_by_id(rowref[1])
+				return self.db.get_song_name_by_id(rowref.user_data[1])
 			elif column == 1:
-				return self.db.get_song_filename_by_id(rowref[1])
+				return self.db.get_song_filename_by_id(rowref.user_data[1])
 			elif column == 2:
 				return ""
 			elif column == 3:
 				return ""
 
 		raise InvalidColumnError(column)
-		return "FUCK"
+		return "Error"""
 
 	def do_iter_next(self, rowref):
-		if not rowref:
-			return None
-		return (rowref[0], self.db.get_next(rowref))
+		print('iter next', rowref)
+		if not rowref or not rowref.user_data:
+			return (False, None)
+		t = Gtk.TreeIter()
+		t.stamp = self.STAMP
+		t.user_data = (rowref.user_data[0], self.db.get_next(rowref.user_data))
+		return (True, t)
+
+	"""def do_iter_next(self, rowref):
+		print('iter previous', rowref)
+		raise NotImplementedError("I'm feeling lazy right now...")
+		if not rowref or not rowref.user_data:
+			return (False, None)
+		t = Gtk.TreeIter()
+		t.stamp = self.STAMP
+		t.user_data = (rowref.user_data[0], self.db.get_next(rowref.user_data))
+		return (True, t)"""
 
 	def do_iter_children(self, rowref):
 		"""if not rowref or not rowref:
 			return self.db.get_nth_artist(0)
-		elif rowref[0] == CollectionModel.ROWREF_ARTIST:
-			albumid = self.db.get_nth_album_by_artist_id(rowref[1])
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ARTIST:
+			albumid = self.db.get_nth_album_by_artist_id(rowref.user_data[1])
 			if albumid:
 				return (CollectionModel.ROWREF_ALBUM, albumid)
-		elif rowref[0] == CollectionModel.ROWREF_ALBUM:
-			discid = self.db.get_nth_disc_by_album_id(rowref[1])
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ALBUM:
+			discid = self.db.get_nth_disc_by_album_id(rowref.user_data[1])
 			if discid:
 				return (CollectionModel.ROWREF_DISC, discid)
 			else:
-				songid = self.db.get_nth_song_by_album_id(rowref[1])
+				songid = self.db.get_nth_song_by_album_id(rowref.user_data[1])
 				if songid:
 					return (CollectionModel.ROWREF_SONG, songid)
-		elif rowref[0] == CollectionModel.ROWREF_DISC:
-			songid = self.db.get_nth_song_by_album_id(rowref[1][0], rowref[1][1])
+		elif rowref.user_data[0] == CollectionModel.ROWREF_DISC:
+			songid = self.db.get_nth_song_by_album_id(rowref.user_data[1][0], rowref.user_data[1][1])
 			if songid:
 				return (CollectionModel.ROWREF_SONG, songid)
 		return None"""
-		return self.do_iter_nth_child(self, rowref, 0)
+		return self.iter_nth_child(self, rowref, 0)
 
 	def do_iter_has_child(self, rowref):
-		if not rowref:
+		print ('has_child', rowref)
+		if not rowref or not rowref.user_data:
 			return True
-		elif rowref[0] == CollectionModel.ROWREF_SONG:
+		elif rowref.user_data[0] == CollectionModel.ROWREF_SONG:
 			return False
 		else:
 			return True
@@ -541,53 +561,72 @@ class CollectionModel(GObject.GObject, Gtk.TreeModel):
 	def do_iter_n_children(self, rowref):
 		if not rowref:
 			return self.db.get_artist_number()
-		elif rowref[0] == CollectionModel.ROWREF_ARTIST:
-			return self.db.get_album_number_by_artist_id(rowref[1])
-		elif rowref[0] == CollectionModel.ROWREF_ALBUM:
-			discnumber = self.db.get_disc_number_by_album_id(rowref[1])
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ARTIST:
+			return self.db.get_album_number_by_artist_id(rowref.user_data[1])
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ALBUM:
+			discnumber = self.db.get_disc_number_by_album_id(rowref.user_data[1])
 			if discnumber:
 				return discnumber
 			else:
-				return self.db.get_song_number_by_album_id(rowref[1])
-		elif rowref[0] == CollectionModel.ROWREF_DISC:
-			return self.db.get_song_number_by_album_id(rowref[1][0], rowref[1][1])
+				return self.db.get_song_number_by_album_id(rowref.user_data[1])
+		elif rowref.user_data[0] == CollectionModel.ROWREF_DISC:
+			return self.db.get_song_number_by_album_id(rowref.user_data[1][0], rowref.user_data[1][1])
 		return 0
 
 	def do_iter_nth_child(self, rowref, n):
-		if not rowref or not rowref:
+		t = Gtk.TreeIter()
+		t.stamp = self.STAMP
+		if not rowref:
+			return (False, None)
+		elif not rowref.user_data:
 			artistid = self.db.get_nth_artist(n)
 			if artistid:
-				return (CollectionModel.ROWREF_ARTIST, artistid)
-		elif rowref[0] == CollectionModel.ROWREF_ARTIST:
-			albumid = self.db.get_nth_album_by_artist_id(n, rowref[1])
+				t.user_data = (CollectionModel.ROWREF_ARTIST, artistid)
+				return (True, t)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ARTIST:
+			albumid = self.db.get_nth_album_by_artist_id(n, rowref.user_data[1])
 			if albumid:
-				return (CollectionModel.ROWREF_ALBUM, albumid)
-		elif rowref[0] == CollectionModel.ROWREF_ALBUM:
-			discid = self.db.get_nth_disc_by_album_id(n, rowref[1])
+				t.user_data = (CollectionModel.ROWREF_ALBUM, albumid)
+				return (True, t)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ALBUM:
+			discid = self.db.get_nth_disc_by_album_id(n, rowref.user_data[1])
 			if discid:
-				return (CollectionModel.ROWREF_DISC, (albumid, discid))
+				t.user_data = (CollectionModel.ROWREF_DISC, (albumid, discid))
+				return (True, t)
 			else:
-				songid = self.db.get_nth_song_by_album_id(n, rowref[1])
+				songid = self.db.get_nth_song_by_album_id(n, rowref.user_data[1])
 				if songid:
-					return (CollectionModel.ROWREF_SONG, songid)
-		elif rowref[0] == CollectionModel.ROWREF_DISC:
-			songid = self.db.get_nth_song_by_album_id(n, rowref[1][0], rowref[1][1])
+					t.user_data = (CollectionModel.ROWREF_SONG, songid)
+					return (True, t)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_DISC:
+			songid = self.db.get_nth_song_by_album_id(n, rowref.user_data[1][0], rowref.user_data[1][1])
 			if songid:
-				return (CollectionModel.ROWREF_SONG, songid)
-		return None
+				t.user_data = (CollectionModel.ROWREF_SONG, songid)
+				return (True, t)
+		return (False, None)
 
 	def do_iter_parent(self, rowref):
+		t = Gtk.TreeIter()
+		t.stamp = self.STAMP
 		if not rowref:
-			return None
-		if rowref[0] == CollectionModel.ROWREF_SONG:
-			albumid = self.db.get_album_by_song_id(rowref[1])
-			discid = self.db.get_disc_by_song_id(rowref[1])
+			return (False, None)
+		if rowref.user_data[0] == CollectionModel.ROWREF_SONG:
+			albumid = self.db.get_album_by_song_id(rowref.user_data[1])
+			discid = self.db.get_disc_by_song_id(rowref.user_data[1])
 			if discid:
-				return (CollectionModel.ROWREF_DISC, (albumid, discid))
+				t.user_data = (CollectionModel.ROWREF_DISC, (albumid, discid))
+				return (True, t)
 			else:
-				return (CollectionModel.ROWREF_ALBUM, albumid)
-		elif rowref[0] == CollectionModel.ROWREF_ALBUM:
-			return (CollectionModel.ROWREF_ARTIST, self.db.get_artist_by_album_id(rowref[1]))
-		elif rowref[0] == CollectionModel.ROWREF_DISC:
-			return (CollectionModel.ROWREF_ALBUM, rowref[1][0])
-		return None
+				t.user_data = (CollectionModel.ROWREF_ALBUM, albumid)
+				return (True, t)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_ALBUM:
+			t.user_data = (CollectionModel.ROWREF_ARTIST, self.db.get_artist_by_album_id(rowref.user_data[1]))
+			return (True, t)
+		elif rowref.user_data[0] == CollectionModel.ROWREF_DISC:
+			t.user_data = (CollectionModel.ROWREF_ALBUM, rowref.user_data[1][0])
+			return (True, t)
+		return (False, None)
+	def do_ref_node(self, treeiter):
+		print("ref node")
+	def do_unref_node(self, treeiter):
+		print("unref node")
